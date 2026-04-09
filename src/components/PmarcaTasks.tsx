@@ -243,20 +243,44 @@ function EveningModal({ card, allTasks, onArchive, onClose }: {
 }
 
 // ─── ListsPanel ───────────────────────────────────────────────────────────────
-function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
+function ListsPanel({ lists, card, onAdd, onMove, onEdit, onDelete, onAddToCard }: {
   lists: Lists;
   card: DailyCard;
   onAdd: (title: string, list: ListName) => void;
   onMove: (id: string, to: ListName) => void;
+  onEdit: (id: string, newTitle: string) => void;
+  onDelete: (id: string) => void;
   onAddToCard: (id: string) => void;
 }) {
   const [drafts, setDrafts] = useState<Record<ListName, string>>({ todo: "", watch: "", later: "" });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const editRef = useRef<HTMLInputElement>(null);
 
   function submit(list: ListName) {
     const title = drafts[list].trim();
     if (!title) return;
     onAdd(title, list);
     setDrafts(d => ({ ...d, [list]: "" }));
+  }
+
+  function startEdit(task: CardTask) {
+    setEditingId(task.id);
+    setEditText(task.title);
+    setTimeout(() => editRef.current?.focus(), 0);
+  }
+
+  function commitEdit() {
+    if (editingId && editText.trim()) {
+      onEdit(editingId, editText.trim());
+    }
+    setEditingId(null);
+    setEditText("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText("");
   }
 
   const canAddToCard = (id: string) => card.taskIds.length < 5 && !card.taskIds.includes(id);
@@ -290,10 +314,43 @@ function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
 
           {lists[listName].map(task => (
             <div key={task.id} style={{
-              background: "#161510", border: "1px solid #1e1d16", borderRadius: 6,
+              background: "#161510", border: `1px solid ${editingId === task.id ? "#c9a84c" : "#1e1d16"}`, borderRadius: 6,
               padding: "8px 10px", marginBottom: 6,
+              transition: "border-color 0.2s ease",
             }}>
-              <div style={{ fontSize: 13, color: "#ede8de", marginBottom: 6 }}>{task.title}</div>
+              {editingId === task.id ? (
+                <input
+                  ref={editRef}
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") commitEdit();
+                    if (e.key === "Escape") cancelEdit();
+                  }}
+                  onBlur={commitEdit}
+                  style={{
+                    width: "100%", padding: "2px 4px", marginBottom: 6,
+                    background: "rgba(201,168,76,.08)", border: "1px solid #c9a84c",
+                    borderRadius: 3, color: "#ede8de", fontSize: 13,
+                    fontFamily: "'Georgia', serif", outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              ) : (
+                <div
+                  onClick={() => startEdit(task)}
+                  title="Click to edit"
+                  style={{
+                    fontSize: 13, color: "#ede8de", marginBottom: 6,
+                    cursor: "text", borderRadius: 3, padding: "2px 4px",
+                    transition: "background 0.15s ease",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(201,168,76,.06)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  {task.title}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {canAddToCard(task.id) && (
                   <button onClick={() => onAddToCard(task.id)} style={{
@@ -309,6 +366,11 @@ function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
                     padding: "2px 6px", cursor: "pointer",
                   }}>{l}</button>
                 ))}
+                <button onClick={() => onDelete(task.id)} style={{
+                  fontSize: 9, fontFamily: "monospace", color: "#c97070",
+                  background: "none", border: "1px solid rgba(201,112,112,.3)", borderRadius: 3,
+                  padding: "2px 6px", cursor: "pointer", marginLeft: "auto",
+                }}>✕</button>
               </div>
             </div>
           ))}
@@ -319,17 +381,26 @@ function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
 }
 
 // ─── TodayCard ────────────────────────────────────────────────────────────────
-function TodayCard({ card, cardTasks, onCheck, onFlip, flipped }: {
+function TodayCard({ card, cardTasks, onCheck, onFlip, onAddAntiTodo, flipped }: {
   card: DailyCard;
   cardTasks: CardTask[];
   onCheck: (t: CardTask) => void;
   onFlip: () => void;
+  onAddAntiTodo: (text: string) => void;
   flipped: boolean;
 }) {
+  const [antiDraft, setAntiDraft] = useState("");
   const ruled = {
     backgroundImage: `repeating-linear-gradient(transparent, transparent 27px, #d4cdb8 27px, #d4cdb8 28px)`,
     backgroundPositionY: "36px",
   };
+
+  function submitAntiTodo() {
+    const text = antiDraft.trim();
+    if (!text) return;
+    onAddAntiTodo(text);
+    setAntiDraft("");
+  }
 
   return (
     <div style={{
@@ -376,17 +447,39 @@ function TodayCard({ card, cardTasks, onCheck, onFlip, flipped }: {
           <div style={{ fontFamily: "monospace", fontSize: 10, color: "#8a7f6a", letterSpacing: ".08em", marginBottom: 14, textTransform: "uppercase" }}>
             Done today
           </div>
-          {card.antiTodo.length === 0 ? (
-            <p style={{ fontFamily: "monospace", fontSize: 12, color: "#a09070", fontStyle: "italic" }}>
-              Nothing logged yet. Check tasks off on the front.
+          {card.antiTodo.length === 0 && (
+            <p style={{ fontFamily: "monospace", fontSize: 12, color: "#a09070", fontStyle: "italic", marginBottom: 14 }}>
+              Nothing logged yet. Add accomplishments below.
             </p>
-          ) : (
-            card.antiTodo.map((entry, i) => (
-              <div key={i} style={{ fontFamily: "'Georgia', serif", fontSize: 14, color: "#2a2010", marginBottom: 10, display: "flex", gap: 10 }}>
-                <span style={{ color: "#6aaa6a" }}>✓</span> {entry}
-              </div>
-            ))
           )}
+          {card.antiTodo.map((entry, i) => (
+            <div key={i} style={{ fontFamily: "'Georgia', serif", fontSize: 14, color: "#2a2010", marginBottom: 10, display: "flex", gap: 10 }}>
+              <span style={{ color: "#6aaa6a" }}>✓</span> {entry}
+            </div>
+          ))}
+
+          {/* Manual Anti-Todo input */}
+          <div style={{ display: "flex", gap: 6, marginTop: 18 }}>
+            <input
+              value={antiDraft}
+              onChange={e => setAntiDraft(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && submitAntiTodo()}
+              placeholder="+ log something you did…"
+              style={{
+                flex: 1, padding: "6px 8px",
+                background: "rgba(106,170,106,.06)",
+                border: "1px solid rgba(106,170,106,.25)",
+                borderRadius: 4, color: "#2a2010", fontSize: 12,
+                fontFamily: "monospace", outline: "none",
+              }}
+            />
+            <button onClick={submitAntiTodo} style={{
+              padding: "6px 10px", background: "rgba(106,170,106,.12)",
+              border: "1px solid rgba(106,170,106,.25)",
+              borderRadius: 4, color: "#4a8a4a", fontFamily: "monospace",
+              fontSize: 11, cursor: "pointer", fontWeight: 600,
+            }}>✓</button>
+          </div>
         </div>
       )}
     </div>
@@ -505,6 +598,45 @@ export default function PmarcaTasks() {
     updateCard({ ...card, taskIds: [...card.taskIds, id] });
   }
 
+  const editTask = useCallback((id: string, newTitle: string) => {
+    const currentLists = stateRef.current.lists;
+    const next: Lists = {
+      todo: currentLists.todo.map(t => t.id === id ? { ...t, title: newTitle } : t),
+      watch: currentLists.watch.map(t => t.id === id ? { ...t, title: newTitle } : t),
+      later: currentLists.later.map(t => t.id === id ? { ...t, title: newTitle } : t),
+    };
+    stateRef.current.lists = next;
+    setLists(next);
+    persist();
+  }, [persist]);
+
+  const deleteTask = useCallback((id: string) => {
+    const currentLists = stateRef.current.lists;
+    const currentCard = stateRef.current.card;
+    const nextLists: Lists = {
+      todo: currentLists.todo.filter(t => t.id !== id),
+      watch: currentLists.watch.filter(t => t.id !== id),
+      later: currentLists.later.filter(t => t.id !== id),
+    };
+    const nextCard: DailyCard = {
+      ...currentCard,
+      taskIds: currentCard.taskIds.filter(tid => tid !== id),
+    };
+    stateRef.current.lists = nextLists;
+    stateRef.current.card = nextCard;
+    setLists(nextLists);
+    setCard(nextCard);
+    persist();
+  }, [persist]);
+
+  function addAntiTodo(text: string) {
+    const nextCard: DailyCard = {
+      ...stateRef.current.card,
+      antiTodo: [...stateRef.current.card.antiTodo, text],
+    };
+    updateCard(nextCard);
+  }
+
   function checkTask(task: CardTask) {
     const nextCard: DailyCard = {
       ...card,
@@ -575,6 +707,7 @@ export default function PmarcaTasks() {
             cardTasks={cardTasks}
             onCheck={checkTask}
             onFlip={() => setFlipped(f => !f)}
+            onAddAntiTodo={addAntiTodo}
             flipped={flipped}
           />
         )}
@@ -584,6 +717,8 @@ export default function PmarcaTasks() {
             card={card}
             onAdd={addTask}
             onMove={moveTask}
+            onEdit={editTask}
+            onDelete={deleteTask}
             onAddToCard={addToCard}
           />
         )}
