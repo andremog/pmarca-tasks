@@ -79,6 +79,81 @@ const C = {
   cardText:"#1a1610",
 };
 
+// ─── TodayCard ────────────────────────────────────────────────────────────────
+function TodayCard({ card, cardTasks, onCheck, onFlip, flipped }: {
+  card: DailyCard;
+  cardTasks: CardTask[];
+  onCheck: (t: CardTask) => void;
+  onFlip: () => void;
+  flipped: boolean;
+}) {
+  const ruled = {
+    backgroundImage: `repeating-linear-gradient(transparent, transparent 27px, #d4cdb8 27px, #d4cdb8 28px)`,
+    backgroundPositionY: "36px",
+  };
+
+  return (
+    <div style={{
+      background: "#f5f0e8", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,.5)",
+      padding: "32px 36px 28px", minHeight: 280, position: "relative", ...ruled,
+    }}>
+      {/* Date + flip */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <span style={{ fontFamily: "monospace", fontSize: 11, color: "#8a7f6a", letterSpacing: ".06em" }}>
+          {card.date}
+        </span>
+        <button onClick={onFlip} style={{
+          fontFamily: "monospace", fontSize: 10, color: "#8a7f6a",
+          background: "none", border: "none", cursor: "pointer", letterSpacing: ".06em",
+        }}>
+          {flipped ? "← front" : "back →"}
+        </button>
+      </div>
+
+      {!flipped ? (
+        <div>
+          {cardTasks.length === 0 ? (
+            <p style={{ fontFamily: "monospace", fontSize: 12, color: "#a09070", fontStyle: "italic" }}>
+              No tasks on today&#39;s card. Use the evening ritual to pick 3–5.
+            </p>
+          ) : (
+            cardTasks.map((t, i) => (
+              <div key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+                <span style={{ fontFamily: "monospace", fontSize: 13, color: "#8a7f6a", minWidth: 16 }}>{i + 1}.</span>
+                <input
+                  type="checkbox"
+                  onChange={() => onCheck(t)}
+                  style={{ marginTop: 3, accentColor: "#6aaa6a", cursor: "pointer" }}
+                />
+                <span style={{ fontFamily: "'Georgia', serif", fontSize: 15, color: "#1a1610", lineHeight: 1.5 }}>
+                  {t.title}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <div>
+          <div style={{ fontFamily: "monospace", fontSize: 10, color: "#8a7f6a", letterSpacing: ".08em", marginBottom: 14, textTransform: "uppercase" }}>
+            Done today
+          </div>
+          {card.antiTodo.length === 0 ? (
+            <p style={{ fontFamily: "monospace", fontSize: 12, color: "#a09070", fontStyle: "italic" }}>
+              Nothing logged yet. Check tasks off on the front.
+            </p>
+          ) : (
+            card.antiTodo.map((entry, i) => (
+              <div key={i} style={{ fontFamily: "'Georgia', serif", fontSize: 14, color: "#2a2010", marginBottom: 10, display: "flex", gap: 10 }}>
+                <span style={{ color: "#6aaa6a" }}>✓</span> {entry}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function PmarcaTasks() {
   const [lists, setLists]       = useState<Lists>(emptyLists());
@@ -255,7 +330,15 @@ export default function PmarcaTasks() {
 
       {/* Views */}
       <div style={{ padding: "32px 24px", maxWidth: 700, margin: "0 auto" }}>
-        {view === "card"    && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>TodayCard — coming in Task 2</div>}
+        {view === "card" && (
+          <TodayCard
+            card={card}
+            cardTasks={cardTasks}
+            onCheck={checkTask}
+            onFlip={() => setFlipped(f => !f)}
+            flipped={flipped}
+          />
+        )}
         {view === "lists"   && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ListsPanel — coming in Task 3</div>}
         {view === "archive" && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ArchivePanel — coming in Task 5</div>}
       </div>
