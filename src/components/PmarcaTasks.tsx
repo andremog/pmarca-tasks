@@ -79,6 +79,82 @@ const C = {
   cardText:"#1a1610",
 };
 
+// ─── ListsPanel ───────────────────────────────────────────────────────────────
+function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
+  lists: Lists;
+  card: DailyCard;
+  onAdd: (title: string, list: ListName) => void;
+  onMove: (id: string, to: ListName) => void;
+  onAddToCard: (id: string) => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<ListName, string>>({ todo: "", watch: "", later: "" });
+
+  function submit(list: ListName) {
+    const title = drafts[list].trim();
+    if (!title) return;
+    onAdd(title, list);
+    setDrafts(d => ({ ...d, [list]: "" }));
+  }
+
+  const canAddToCard = (id: string) => card.taskIds.length < 5 && !card.taskIds.includes(id);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+      {(["todo", "watch", "later"] as ListName[]).map(listName => (
+        <div key={listName}>
+          <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a5440", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>
+            {listName}
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            <input
+              value={drafts[listName]}
+              onChange={e => setDrafts(d => ({ ...d, [listName]: e.target.value }))}
+              onKeyDown={e => e.key === "Enter" && submit(listName)}
+              placeholder="+ add task"
+              style={{
+                flex: 1, padding: "6px 8px", background: "#161510",
+                border: "1px solid #1e1d16", borderRadius: 4,
+                color: "#ede8de", fontSize: 12, fontFamily: "monospace", outline: "none",
+              }}
+            />
+            <button onClick={() => submit(listName)} style={{
+              padding: "6px 10px", background: "transparent", border: "1px solid #1e1d16",
+              borderRadius: 4, color: "#5a5440", fontFamily: "monospace",
+              fontSize: 11, cursor: "pointer",
+            }}>+</button>
+          </div>
+
+          {lists[listName].map(task => (
+            <div key={task.id} style={{
+              background: "#161510", border: "1px solid #1e1d16", borderRadius: 6,
+              padding: "8px 10px", marginBottom: 6,
+            }}>
+              <div style={{ fontSize: 13, color: "#ede8de", marginBottom: 6 }}>{task.title}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {canAddToCard(task.id) && (
+                  <button onClick={() => onAddToCard(task.id)} style={{
+                    fontSize: 9, fontFamily: "monospace", color: "#c9a84c",
+                    background: "none", border: "1px solid #c9a84c", borderRadius: 3,
+                    padding: "2px 6px", cursor: "pointer",
+                  }}>→ card</button>
+                )}
+                {(["todo", "watch", "later"] as ListName[]).filter(l => l !== listName).map(l => (
+                  <button key={l} onClick={() => onMove(task.id, l)} style={{
+                    fontSize: 9, fontFamily: "monospace", color: "#5a5440",
+                    background: "none", border: "1px solid #1e1d16", borderRadius: 3,
+                    padding: "2px 6px", cursor: "pointer",
+                  }}>{l}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── TodayCard ────────────────────────────────────────────────────────────────
 function TodayCard({ card, cardTasks, onCheck, onFlip, flipped }: {
   card: DailyCard;
@@ -339,7 +415,15 @@ export default function PmarcaTasks() {
             flipped={flipped}
           />
         )}
-        {view === "lists"   && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ListsPanel — coming in Task 3</div>}
+        {view === "lists" && (
+          <ListsPanel
+            lists={lists}
+            card={card}
+            onAdd={addTask}
+            onMove={moveTask}
+            onAddToCard={addToCard}
+          />
+        )}
         {view === "archive" && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ArchivePanel — coming in Task 5</div>}
       </div>
 
