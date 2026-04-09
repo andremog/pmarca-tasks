@@ -79,6 +79,122 @@ const C = {
   cardText:"#1a1610",
 };
 
+// ─── EveningModal ─────────────────────────────────────────────────────────────
+function EveningModal({ card, allTasks, onArchive, onClose }: {
+  card: DailyCard;
+  allTasks: CardTask[];
+  onArchive: (tomorrowIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<"review" | "pick">("review");
+  const [selected, setSelected] = useState<string[]>([]);
+
+  function togglePick(id: string) {
+    setSelected(s =>
+      s.includes(id) ? s.filter(x => x !== id) : s.length < 5 ? [...s, id] : s
+    );
+  }
+
+  function finish() {
+    onArchive(selected);
+    onClose();
+  }
+
+  const available = allTasks.filter(t => !card.taskIds.includes(t.id));
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", display: "flex",
+      alignItems: "center", justifyContent: "center", zIndex: 100,
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background: "#161510", border: "1px solid #1e1d16", borderRadius: 12,
+        padding: 32, width: "90%", maxWidth: 500,
+      }}>
+        {step === "review" ? (
+          <>
+            <h2 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 18, color: "#ede8de", margin: "0 0 6px" }}>
+              Evening ritual
+            </h2>
+            <p style={{ fontFamily: "monospace", fontSize: 11, color: "#5a5440", margin: "0 0 20px" }}>
+              Review today, then pick tomorrow&#39;s card.
+            </p>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a5440", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>
+                Done today
+              </div>
+              {card.antiTodo.length === 0 ? (
+                <p style={{ fontFamily: "monospace", fontSize: 12, color: "#5a5440", fontStyle: "italic" }}>Nothing logged.</p>
+              ) : card.antiTodo.map((e, i) => (
+                <div key={i} style={{ fontSize: 13, color: "#6aaa6a", fontFamily: "'Georgia', serif", marginBottom: 6 }}>✓ {e}</div>
+              ))}
+            </div>
+
+            <button onClick={() => setStep("pick")} style={{
+              width: "100%", padding: 10, background: "#c9a84c", border: "none",
+              borderRadius: 6, color: "#1a1410", fontWeight: 600, fontSize: 13,
+              cursor: "pointer", fontFamily: "monospace",
+            }}>
+              Archive card → pick tomorrow&#39;s tasks
+            </button>
+          </>
+        ) : (
+          <>
+            <h2 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 18, color: "#ede8de", margin: "0 0 6px" }}>
+              Tomorrow&#39;s card
+            </h2>
+            <p style={{ fontFamily: "monospace", fontSize: 11, color: "#5a5440", margin: "0 0 20px" }}>
+              Pick 3–5 tasks ({selected.length}/5 selected)
+            </p>
+
+            <div style={{ maxHeight: 280, overflowY: "auto", marginBottom: 20 }}>
+              {available.length === 0 ? (
+                <p style={{ fontFamily: "monospace", fontSize: 12, color: "#5a5440", fontStyle: "italic" }}>No tasks in lists. Add some first.</p>
+              ) : available.map(t => {
+                const on = selected.includes(t.id);
+                return (
+                  <div key={t.id} onClick={() => togglePick(t.id)} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 10px", borderRadius: 5, marginBottom: 4,
+                    border: `1px solid ${on ? "#c9a84c" : "#1e1d16"}`,
+                    background: on ? "rgba(201,168,76,.08)" : "transparent",
+                    cursor: selected.length < 5 || on ? "pointer" : "default",
+                  }}>
+                    <span style={{ fontFamily: "monospace", fontSize: 10, color: on ? "#c9a84c" : "#5a5440", minWidth: 14 }}>
+                      {on ? "●" : "○"}
+                    </span>
+                    <span style={{ fontSize: 13, color: "#ede8de" }}>{t.title}</span>
+                    <span style={{ fontSize: 9, fontFamily: "monospace", color: "#5a5440", marginLeft: "auto" }}>{t.list}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={finish} disabled={selected.length < 3} style={{
+                flex: 1, padding: 10,
+                background: selected.length >= 3 ? "#c9a84c" : "#1e1d16",
+                border: "none", borderRadius: 6,
+                color: selected.length >= 3 ? "#1a1410" : "#5a5440",
+                fontWeight: 600, fontSize: 13, cursor: selected.length >= 3 ? "pointer" : "default",
+                fontFamily: "monospace",
+              }}>
+                Set tomorrow&#39;s card ({selected.length})
+              </button>
+              <button onClick={() => setStep("review")} style={{
+                padding: "10px 16px", background: "transparent",
+                border: "1px solid #1e1d16", borderRadius: 6,
+                color: "#5a5440", fontSize: 13, cursor: "pointer", fontFamily: "monospace",
+              }}>← back</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── ListsPanel ───────────────────────────────────────────────────────────────
 function ListsPanel({ lists, card, onAdd, onMove, onAddToCard }: {
   lists: Lists;
@@ -427,7 +543,14 @@ export default function PmarcaTasks() {
         {view === "archive" && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ArchivePanel — coming in Task 5</div>}
       </div>
 
-      {showEvening && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12, padding: 24 }}>EveningModal — coming in Task 4</div>}
+      {showEvening && (
+        <EveningModal
+          card={card}
+          allTasks={allTasks}
+          onArchive={handleArchive}
+          onClose={() => setShowEvening(false)}
+        />
+      )}
     </div>
   );
 }
