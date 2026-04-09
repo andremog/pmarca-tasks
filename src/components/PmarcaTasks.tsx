@@ -1,15 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { storage as supabaseStorage } from "@/lib/storage";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pmarca-tasks-v1";
-const ARCHIVE_KEY = "pmarca-tasks-archive-v1";
-const STREAK_KEY  = "pmarca-tasks-streak-v1";
-const MAX_CARD    = 3;
-
-// ─── Storage adapter (Supabase-backed) ───────────────────────────────────────
+// ─── Storage ──────────────────────────────────────────────────────────────────
 const store = {
   async get(key: string) {
     try {
@@ -24,137 +18,176 @@ const store = {
   },
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-type Priority = "high" | "medium" | "low";
-type Status   = "todo" | "in_progress" | "done";
+const LISTS_KEY   = "pmarca-lists-v1";
+const CARD_KEY    = "pmarca-card-v1";
+const ARCHIVE_KEY = "pmarca-archive-v1";
 
-interface Task {
+// ─── Types ────────────────────────────────────────────────────────────────────
+type ListName = "todo" | "watch" | "later";
+
+interface CardTask {
   id: string;
   title: string;
-  description: string;
-  priority: Priority;
-  status: Status;
+  list: ListName;
   createdAt: string;
-  updatedAt: string;
-  dueDate?: string;
-  tags: string[];
 }
 
-interface AppState {
-  tasks: Task[];
-  lastUpdated: string;
+interface DailyCard {
+  date: string;        // YYYY-MM-DD
+  taskIds: string[];   // 3–5 ids
+  antiTodo: string[];  // accomplishments logged during the day
+  archivedAt?: string;
 }
 
-const DEFAULT_STATE: AppState = { tasks: [], lastUpdated: new Date().toISOString() };
+interface Lists {
+  todo: CardTask[];
+  watch: CardTask[];
+  later: CardTask[];
+}
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function nextId() {
-  return `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  return `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-export default function PmarcaTasks() {
-  const [state, setState]       = useState<AppState>(DEFAULT_STATE);
-  const [loading, setLoading]   = useState(true);
-  const [view, setView]         = useState<"board" | "list">("board");
-  const [filter, setFilter]     = useState<Status | "all">("all");
-  const [editTask, setEditTask] = useState<Task | null>(null);
-  const [newTask, setNewTask]   = useState(false);
-  const saveTimer               = useRef<ReturnType<typeof setTimeout> | null>(null);
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  // ── Load ──────────────────────────────────────────────────────────────────
+function emptyCard(): DailyCard {
+  return { date: today(), taskIds: [], antiTodo: [] };
+}
+
+function emptyLists(): Lists {
+  return { todo: [], watch: [], later: [] };
+}
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:      "#0f0e09",
+  surface: "#161510",
+  border:  "#1e1d16",
+  text:    "#ede8de",
+  muted:   "#5a5440",
+  gold:    "#c9a84c",
+  green:   "#6aaa6a",
+  red:     "#c97070",
+  card:    "#f5f0e8",
+  cardLine:"#d4cdb8",
+  cardText:"#1a1610",
+};
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+export default function PmarcaTasks() {
+  const [lists, setLists]       = useState<Lists>(emptyLists());
+  const [card, setCard]         = useState<DailyCard>(emptyCard());
+  const [archive, setArchive]   = useState<DailyCard[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [view, setView]         = useState<"card" | "lists" | "archive">("card");
+  const [showEvening, setShowEvening] = useState(false);
+  const [flipped, setFlipped]   = useState(false);
+  const saveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Load ────────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
-      const raw = await store.get(STORAGE_KEY);
-      if (raw?.value) {
-        try { setState(JSON.parse(raw.value)); } catch {}
-      }
+      const [lr, cr, ar] = await Promise.all([
+        store.get(LISTS_KEY),
+        store.get(CARD_KEY),
+        store.get(ARCHIVE_KEY),
+      ]);
+      try { if (lr?.value) setLists(JSON.parse(lr.value)); } catch {}
+      try {
+        if (cr?.value) {
+          const saved: DailyCard = JSON.parse(cr.value);
+          setCard(saved.date === today() ? saved : emptyCard());
+        }
+      } catch {}
+      try { if (ar?.value) setArchive(JSON.parse(ar.value)); } catch {}
       setLoading(false);
     })();
   }, []);
 
-  // ── Persist (debounced) ───────────────────────────────────────────────────
-  const persist = useCallback((next: AppState) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      store.set(STORAGE_KEY, JSON.stringify(next));
+  // ── Persist ─────────────────────────────────────────────────────────────────
+  const persist = useCallback((l: Lists, c: DailyCard, a: DailyCard[]) => {
+    if (saveRef.current) clearTimeout(saveRef.current);
+    saveRef.current = setTimeout(() => {
+      store.set(LISTS_KEY, JSON.stringify(l));
+      store.set(CARD_KEY, JSON.stringify(c));
+      store.set(ARCHIVE_KEY, JSON.stringify(a));
     }, 800);
   }, []);
 
-  const update = useCallback((fn: (s: AppState) => AppState) => {
-    setState(prev => {
-      const next = fn(prev);
-      persist(next);
-      return next;
+  const updateLists = useCallback((next: Lists) => {
+    setLists(next);
+    persist(next, card, archive);
+  }, [card, archive, persist]);
+
+  const updateCard = useCallback((next: DailyCard) => {
+    setCard(next);
+    persist(lists, next, archive);
+  }, [lists, archive, persist]);
+
+  const updateArchive = useCallback((next: DailyCard[]) => {
+    setArchive(next);
+    persist(lists, card, next);
+  }, [lists, card, persist]);
+
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const allTasks: CardTask[] = [...lists.todo, ...lists.watch, ...lists.later];
+
+  const cardTasks = card.taskIds
+    .map(id => allTasks.find(t => t.id === id))
+    .filter((t): t is CardTask => !!t);
+
+  // ── Mutations ───────────────────────────────────────────────────────────────
+  function addTask(title: string, list: ListName) {
+    const task: CardTask = { id: nextId(), title, list, createdAt: new Date().toISOString() };
+    updateLists({ ...lists, [list]: [...lists[list], task] });
+  }
+
+  function moveTask(id: string, to: ListName) {
+    const from = (["todo", "watch", "later"] as ListName[]).find(l => lists[l].some(t => t.id === id))!;
+    const task = lists[from].find(t => t.id === id)!;
+    updateLists({
+      ...lists,
+      [from]: lists[from].filter(t => t.id !== id),
+      [to]: [...lists[to], { ...task, list: to }],
     });
-  }, [persist]);
+  }
 
-  // ── Task helpers ──────────────────────────────────────────────────────────
-  const addTask = (t: Omit<Task, "id" | "createdAt" | "updatedAt">) => {
-    const now = new Date().toISOString();
-    update(s => ({
-      ...s,
-      tasks: [...s.tasks, { ...t, id: nextId(), createdAt: now, updatedAt: now }],
-      lastUpdated: now,
-    }));
-    setNewTask(false);
-  };
+  function addToCard(id: string) {
+    if (card.taskIds.length >= 5 || card.taskIds.includes(id)) return;
+    updateCard({ ...card, taskIds: [...card.taskIds, id] });
+  }
 
-  const saveTask = (t: Task) => {
-    update(s => ({
-      ...s,
-      tasks: s.tasks.map(x => x.id === t.id ? { ...t, updatedAt: new Date().toISOString() } : x),
-      lastUpdated: new Date().toISOString(),
-    }));
-    setEditTask(null);
-  };
+  function checkTask(task: CardTask) {
+    const nextCard: DailyCard = {
+      ...card,
+      taskIds: card.taskIds.filter(id => id !== task.id),
+      antiTodo: [...card.antiTodo, task.title],
+    };
+    const nextLists: Lists = {
+      todo:  lists.todo.filter(t => t.id !== task.id),
+      watch: lists.watch.filter(t => t.id !== task.id),
+      later: lists.later.filter(t => t.id !== task.id),
+    };
+    setCard(nextCard);
+    setLists(nextLists);
+    persist(nextLists, nextCard, archive);
+  }
 
-  const deleteTask = (id: string) => {
-    update(s => ({
-      ...s,
-      tasks: s.tasks.filter(x => x.id !== id),
-      lastUpdated: new Date().toISOString(),
-    }));
-    setEditTask(null);
-  };
+  function handleArchive(tomorrowIds: string[]) {
+    const archived = { ...card, archivedAt: new Date().toISOString() };
+    const nextArchive = [archived, ...archive];
+    const nextCard: DailyCard = { date: today(), taskIds: tomorrowIds, antiTodo: [] };
+    setCard(nextCard);
+    setArchive(nextArchive);
+    setFlipped(false);
+    persist(lists, nextCard, nextArchive);
+  }
 
-  const cycleStatus = (id: string) => {
-    const cycle: Record<Status, Status> = { todo: "in_progress", in_progress: "done", done: "todo" };
-    update(s => ({
-      ...s,
-      tasks: s.tasks.map(x => x.id === id ? { ...x, status: cycle[x.status], updatedAt: new Date().toISOString() } : x),
-      lastUpdated: new Date().toISOString(),
-    }));
-  };
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const visible = useMemo(() =>
-    filter === "all" ? state.tasks : state.tasks.filter(t => t.status === filter),
-    [state.tasks, filter]
-  );
-
-  const byStatus = (s: Status) => visible.filter(t => t.status === s);
-
-  // ── Styles ────────────────────────────────────────────────────────────────
-  const C = {
-    bg:      "#0f0e09",
-    surface: "#161510",
-    border:  "#1e1d16",
-    text:    "#ede8de",
-    muted:   "#5a5440",
-    gold:    "#c9a84c",
-    green:   "#6aaa6a",
-    red:     "#c97070",
-    blue:    "#7090c9",
-  };
-
-  const priorityColor: Record<Priority, string> = {
-    high: C.red, medium: C.gold, low: C.muted,
-  };
-
-  const statusLabel: Record<Status, string> = {
-    todo: "Todo", in_progress: "In Progress", done: "Done",
-  };
-
+  // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 12, color: C.muted }}>
       Loading…
@@ -162,184 +195,38 @@ export default function PmarcaTasks() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Georgia', serif", padding: "24px 20px" }}>
-      {/* Header */}
-      <div style={{ maxWidth: 900, margin: "0 auto 24px" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 26, fontWeight: 700, color: C.text, margin: 0 }}>
-            pmarca <em style={{ color: C.gold }}>tasks</em>
-          </h1>
-          <div style={{ display: "flex", gap: 8 }}>
-            {(["all", "todo", "in_progress", "done"] as const).map(f => (
-              <button key={f} onClick={() => setFilter(f)} style={{
-                padding: "4px 12px", borderRadius: 4, border: `1px solid ${filter === f ? C.gold : C.border}`,
-                background: filter === f ? C.gold : "transparent", color: filter === f ? "#1a1410" : C.muted,
-                fontSize: 11, fontFamily: "monospace", cursor: "pointer", letterSpacing: ".04em",
-              }}>
-                {f === "all" ? "All" : statusLabel[f]}
-              </button>
-            ))}
-            <button onClick={() => setNewTask(true)} style={{
-              padding: "4px 14px", borderRadius: 4, border: `1px solid ${C.gold}`,
-              background: "transparent", color: C.gold, fontSize: 11, fontFamily: "monospace",
-              cursor: "pointer", letterSpacing: ".04em",
-            }}>
-              + Add
-            </button>
-          </div>
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Georgia', serif" }}>
+      {/* Nav */}
+      <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px", borderBottom: `1px solid ${C.border}` }}>
+        <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>
+          pmarca <em style={{ color: C.gold }}>tasks</em>
+        </h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          {(["card", "lists", "archive"] as const).map(v => (
+            <button key={v} onClick={() => setView(v)} style={{
+              padding: "4px 14px", borderRadius: 4,
+              border: `1px solid ${view === v ? C.gold : C.border}`,
+              background: view === v ? C.gold : "transparent",
+              color: view === v ? "#1a1410" : C.muted,
+              fontSize: 11, fontFamily: "monospace", cursor: "pointer", letterSpacing: ".04em",
+            }}>{v}</button>
+          ))}
+          <button onClick={() => setShowEvening(true)} style={{
+            padding: "4px 14px", borderRadius: 4, border: `1px solid ${C.border}`,
+            background: "transparent", color: C.muted, fontSize: 11,
+            fontFamily: "monospace", cursor: "pointer", letterSpacing: ".04em",
+          }}>evening →</button>
         </div>
+      </nav>
+
+      {/* Views */}
+      <div style={{ padding: "32px 24px", maxWidth: 700, margin: "0 auto" }}>
+        {view === "card"    && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>TodayCard — coming in Task 2</div>}
+        {view === "lists"   && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ListsPanel — coming in Task 3</div>}
+        {view === "archive" && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ArchivePanel — coming in Task 5</div>}
       </div>
 
-      {/* Board */}
-      <div style={{ maxWidth: 900, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-        {(["todo", "in_progress", "done"] as Status[]).map(col => (
-          <div key={col}>
-            <div style={{ fontSize: 10, fontFamily: "monospace", color: C.muted, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>
-              {statusLabel[col]} <span style={{ color: C.border }}>({byStatus(col).length})</span>
-            </div>
-            {byStatus(col).map(task => (
-              <div key={task.id} onClick={() => setEditTask(task)} style={{
-                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "12px 14px", marginBottom: 8, cursor: "pointer",
-                borderLeft: `3px solid ${priorityColor[task.priority]}`,
-              }}>
-                <div style={{ fontSize: 13, color: C.text, marginBottom: 4 }}>{task.title}</div>
-                {task.description && (
-                  <div style={{ fontSize: 11, color: C.muted, marginBottom: 6, lineHeight: 1.4 }}>{task.description}</div>
-                )}
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {task.tags.map(tag => (
-                    <span key={tag} style={{ fontSize: 9, fontFamily: "monospace", color: C.muted, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 3, padding: "1px 6px" }}>
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-
-      {/* New Task Modal */}
-      {newTask && (
-        <TaskModal
-          onSave={addTask as any}
-          onClose={() => setNewTask(false)}
-          C={C}
-        />
-      )}
-
-      {/* Edit Task Modal */}
-      {editTask && (
-        <TaskModal
-          task={editTask}
-          onSave={saveTask as any}
-          onDelete={() => deleteTask(editTask.id)}
-          onClose={() => setEditTask(null)}
-          C={C}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Task Modal ───────────────────────────────────────────────────────────────
-function TaskModal({ task, onSave, onDelete, onClose, C }: {
-  task?: Task;
-  onSave: (t: any) => void;
-  onDelete?: () => void;
-  onClose: () => void;
-  C: Record<string, string>;
-}) {
-  const [title, setTitle]       = useState(task?.title ?? "");
-  const [desc, setDesc]         = useState(task?.description ?? "");
-  const [priority, setPriority] = useState<Priority>(task?.priority ?? "medium");
-  const [status, setStatus]     = useState<Status>(task?.status ?? "todo");
-  const [tags, setTags]         = useState(task?.tags.join(", ") ?? "");
-  const [due, setDue]           = useState(task?.dueDate ?? "");
-
-  const handle = () => {
-    if (!title.trim()) return;
-    onSave({
-      ...(task ?? {}),
-      title: title.trim(),
-      description: desc.trim(),
-      priority,
-      status,
-      tags: tags.split(",").map(t => t.trim()).filter(Boolean),
-      dueDate: due || undefined,
-    });
-  };
-
-  const inputStyle = {
-    width: "100%", padding: "8px 10px", background: "#1a1914",
-    border: `1px solid ${C.border}`, borderRadius: 5, color: C.text,
-    fontSize: 13, outline: "none", boxSizing: "border-box" as const,
-  };
-
-  return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex",
-      alignItems: "center", justifyContent: "center", zIndex: 100,
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{
-        background: "#161510", border: `1px solid ${C.border}`, borderRadius: 12,
-        padding: 28, width: "90%", maxWidth: 460,
-      }}>
-        <h2 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 18, color: C.text, margin: "0 0 20px" }}>
-          {task ? "Edit Task" : "New Task"}
-        </h2>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={inputStyle} />
-          <textarea placeholder="Description" value={desc} onChange={e => setDesc(e.target.value)} rows={3}
-            style={{ ...inputStyle, resize: "vertical" as const, fontFamily: "inherit" }} />
-
-          <div style={{ display: "flex", gap: 8 }}>
-            {(["high", "medium", "low"] as Priority[]).map(p => (
-              <button key={p} onClick={() => setPriority(p)} style={{
-                flex: 1, padding: "6px 0", borderRadius: 4,
-                border: `1px solid ${priority === p ? C.gold : C.border}`,
-                background: priority === p ? C.gold : "transparent",
-                color: priority === p ? "#1a1410" : C.muted,
-                fontSize: 11, fontFamily: "monospace", cursor: "pointer",
-              }}>{p}</button>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            {(["todo", "in_progress", "done"] as Status[]).map(s => (
-              <button key={s} onClick={() => setStatus(s)} style={{
-                flex: 1, padding: "6px 0", borderRadius: 4,
-                border: `1px solid ${status === s ? C.blue : C.border}`,
-                background: status === s ? C.blue : "transparent",
-                color: status === s ? "#fff" : C.muted,
-                fontSize: 10, fontFamily: "monospace", cursor: "pointer",
-              }}>{s.replace("_", " ")}</button>
-            ))}
-          </div>
-
-          <input placeholder="Tags (comma separated)" value={tags} onChange={e => setTags(e.target.value)} style={inputStyle} />
-          <input type="date" value={due} onChange={e => setDue(e.target.value)} style={{ ...inputStyle, colorScheme: "dark" }} />
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
-          <button onClick={handle} style={{
-            flex: 1, padding: 10, background: C.gold, border: "none", borderRadius: 6,
-            color: "#1a1410", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "monospace",
-          }}>Save</button>
-          {onDelete && (
-            <button onClick={onDelete} style={{
-              padding: "10px 16px", background: "transparent", border: `1px solid ${C.red}`,
-              borderRadius: 6, color: C.red, fontSize: 13, cursor: "pointer", fontFamily: "monospace",
-            }}>Delete</button>
-          )}
-          <button onClick={onClose} style={{
-            padding: "10px 16px", background: "transparent", border: `1px solid ${C.border}`,
-            borderRadius: 6, color: C.muted, fontSize: 13, cursor: "pointer", fontFamily: "monospace",
-          }}>Cancel</button>
-        </div>
-      </div>
+      {showEvening && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12, padding: 24 }}>EveningModal — coming in Task 4</div>}
     </div>
   );
 }
