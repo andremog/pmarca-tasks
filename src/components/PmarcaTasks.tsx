@@ -79,6 +79,53 @@ const C = {
   cardText:"#1a1610",
 };
 
+// ─── ArchivePanel ─────────────────────────────────────────────────────────────
+function ArchivePanel({ archive, allTasks }: {
+  archive: DailyCard[];
+  allTasks: CardTask[];
+}) {
+  if (archive.length === 0) return (
+    <p style={{ fontFamily: "monospace", fontSize: 12, color: "#5a5440", fontStyle: "italic" }}>
+      No archived cards yet. Complete the evening ritual to archive your first card.
+    </p>
+  );
+
+  return (
+    <div>
+      {archive.map((c, i) => (
+        <div key={i} style={{
+          background: "#161510", border: "1px solid #1e1d16", borderRadius: 8,
+          padding: "16px 20px", marginBottom: 12,
+        }}>
+          <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a5440", letterSpacing: ".08em", marginBottom: 10 }}>
+            {c.date}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: "#5a5440", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 6 }}>Card</div>
+              {c.taskIds.map(id => {
+                const t = allTasks.find(x => x.id === id);
+                return (
+                  <div key={id} style={{ fontSize: 12, color: "#ede8de", fontFamily: "'Georgia', serif", marginBottom: 4 }}>
+                    {t ? t.title : <em style={{ color: "#5a5440" }}>deleted</em>}
+                  </div>
+                );
+              })}
+            </div>
+            <div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: "#5a5440", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 6 }}>Done</div>
+              {c.antiTodo.map((e, j) => (
+                <div key={j} style={{ fontSize: 12, color: "#6aaa6a", fontFamily: "'Georgia', serif", marginBottom: 4 }}>✓ {e}</div>
+              ))}
+              {c.antiTodo.length === 0 && <em style={{ fontSize: 11, color: "#5a5440", fontFamily: "monospace" }}>nothing logged</em>}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── EveningModal ─────────────────────────────────────────────────────────────
 function EveningModal({ card, allTasks, onArchive, onClose }: {
   card: DailyCard;
@@ -540,7 +587,9 @@ export default function PmarcaTasks() {
             onAddToCard={addToCard}
           />
         )}
-        {view === "archive" && <div style={{ color: C.muted, fontFamily: "monospace", fontSize: 12 }}>ArchivePanel — coming in Task 5</div>}
+        {view === "archive" && (
+          <ArchivePanel archive={archive} allTasks={allTasks} />
+        )}
       </div>
 
       {showEvening && (
