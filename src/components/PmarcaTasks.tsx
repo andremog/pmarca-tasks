@@ -50,8 +50,10 @@ function nextId() {
   return `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+// Fix 1: Use local date instead of UTC
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function emptyCard(): DailyCard {
@@ -88,6 +90,9 @@ export default function PmarcaTasks() {
   const [flipped, setFlipped]   = useState(false);
   const saveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Fix 2: stateRef to avoid stale closures in persist and updaters
+  const stateRef = useRef({ lists: emptyLists(), card: emptyCard(), archive: [] as DailyCard[] });
+
   // ── Load ────────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
@@ -96,20 +101,31 @@ export default function PmarcaTasks() {
         store.get(CARD_KEY),
         store.get(ARCHIVE_KEY),
       ]);
-      try { if (lr?.value) setLists(JSON.parse(lr.value)); } catch {}
+      let parsedLists = emptyLists();
+      let parsedCard = emptyCard();
+      let parsedArchive: DailyCard[] = [];
+      try { if (lr?.value) parsedLists = JSON.parse(lr.value); } catch {}
       try {
         if (cr?.value) {
           const saved: DailyCard = JSON.parse(cr.value);
-          setCard(saved.date === today() ? saved : emptyCard());
+          parsedCard = saved.date === today() ? saved : emptyCard();
         }
       } catch {}
-      try { if (ar?.value) setArchive(JSON.parse(ar.value)); } catch {}
+      try { if (ar?.value) parsedArchive = JSON.parse(ar.value); } catch {}
+      // Sync ref before setting state so persist always sees current values
+      stateRef.current.lists = parsedLists;
+      stateRef.current.card = parsedCard;
+      stateRef.current.archive = parsedArchive;
+      setLists(parsedLists);
+      setCard(parsedCard);
+      setArchive(parsedArchive);
       setLoading(false);
     })();
   }, []);
 
-  // ── Persist ─────────────────────────────────────────────────────────────────
-  const persist = useCallback((l: Lists, c: DailyCard, a: DailyCard[]) => {
+  // ── Persist (reads from ref — never stale) ───────────────────────────────────
+  const persist = useCallback(() => {
+    const { lists: l, card: c, archive: a } = stateRef.current;
     if (saveRef.current) clearTimeout(saveRef.current);
     saveRef.current = setTimeout(() => {
       store.set(LISTS_KEY, JSON.stringify(l));
@@ -119,19 +135,22 @@ export default function PmarcaTasks() {
   }, []);
 
   const updateLists = useCallback((next: Lists) => {
+    stateRef.current.lists = next;
     setLists(next);
-    persist(next, card, archive);
-  }, [card, archive, persist]);
+    persist();
+  }, [persist]);
 
   const updateCard = useCallback((next: DailyCard) => {
+    stateRef.current.card = next;
     setCard(next);
-    persist(lists, next, archive);
-  }, [lists, archive, persist]);
+    persist();
+  }, [persist]);
 
   const updateArchive = useCallback((next: DailyCard[]) => {
+    stateRef.current.archive = next;
     setArchive(next);
-    persist(lists, card, next);
-  }, [lists, card, persist]);
+    persist();
+  }, [persist]);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const allTasks: CardTask[] = [...lists.todo, ...lists.watch, ...lists.later];
@@ -141,20 +160,31 @@ export default function PmarcaTasks() {
     .filter((t): t is CardTask => !!t);
 
   // ── Mutations ───────────────────────────────────────────────────────────────
-  function addTask(title: string, list: ListName) {
-    const task: CardTask = { id: nextId(), title, list, createdAt: new Date().toISOString() };
-    updateLists({ ...lists, [list]: [...lists[list], task] });
-  }
 
-  function moveTask(id: string, to: ListName) {
-    const from = (["todo", "watch", "later"] as ListName[]).find(l => lists[l].some(t => t.id === id))!;
-    const task = lists[from].find(t => t.id === id)!;
-    updateLists({
-      ...lists,
-      [from]: lists[from].filter(t => t.id !== id),
-      [to]: [...lists[to], { ...task, list: to }],
-    });
-  }
+  // Fix 3: wrap addTask and moveTask in useCallback; both read from stateRef
+  const addTask = useCallback((title: string, list: ListName) => {
+    const task: CardTask = { id: nextId(), title, list, createdAt: new Date().toISOString() };
+    const next = { ...stateRef.current.lists, [list]: [...stateRef.current.lists[list], task] };
+    stateRef.current.lists = next;
+    setLists(next);
+    persist();
+  }, [persist]);
+
+  const moveTask = useCallback((id: string, to: ListName) => {
+    const currentLists = stateRef.current.lists;
+    const from = (["todo", "watch", "later"] as ListName[]).find(l => currentLists[l].some(t => t.id === id));
+    if (!from) return;
+    const task = currentLists[from].find(t => t.id === id);
+    if (!task) return;
+    const next: Lists = {
+      ...currentLists,
+      [from]: currentLists[from].filter(t => t.id !== id),
+      [to]: [...currentLists[to], { ...task, list: to }],
+    };
+    stateRef.current.lists = next;
+    setLists(next);
+    persist();
+  }, [persist]);
 
   function addToCard(id: string) {
     if (card.taskIds.length >= 5 || card.taskIds.includes(id)) return;
@@ -172,19 +202,23 @@ export default function PmarcaTasks() {
       watch: lists.watch.filter(t => t.id !== task.id),
       later: lists.later.filter(t => t.id !== task.id),
     };
+    stateRef.current.card = nextCard;
+    stateRef.current.lists = nextLists;
     setCard(nextCard);
     setLists(nextLists);
-    persist(nextLists, nextCard, archive);
+    persist();
   }
 
   function handleArchive(tomorrowIds: string[]) {
     const archived = { ...card, archivedAt: new Date().toISOString() };
     const nextArchive = [archived, ...archive];
     const nextCard: DailyCard = { date: today(), taskIds: tomorrowIds, antiTodo: [] };
+    stateRef.current.card = nextCard;
+    stateRef.current.archive = nextArchive;
     setCard(nextCard);
     setArchive(nextArchive);
     setFlipped(false);
-    persist(lists, nextCard, nextArchive);
+    persist();
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
